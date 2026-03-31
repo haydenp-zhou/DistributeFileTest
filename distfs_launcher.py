@@ -303,7 +303,10 @@ class DistFSLauncher:
         # 简化的启动命令：后台启动 + 记录PID + 输出PID
         # 使用 $! 获取最后后台进程的PID
         full_cmd = f"cd {cfg.work_dir} && "
+        full_cmd += f"(test -f {self.remote_bin_path} || exit 1) && "  # 检查文件存在
+        full_cmd += f"(test -x {self.remote_bin_path} || chmod +x {self.remote_bin_path}) && "  # 确保可执行
         full_cmd += f"nohup {cmd} > {log_file} 2>&1 >/dev/null & "
+        full_cmd += f"sleep 1 && "  # 等待进程启动
         full_cmd += f"echo \$!"
         
         return full_cmd
@@ -322,10 +325,17 @@ class DistFSLauncher:
         if rc != 0:
             return {"error": f"远程二进制文件不存在或不可执行: {self.remote_bin_path}"}
         
-        # 启动进程
+        # 创建远程目录（如果不存在）
+        self._ssh_cmd(cfg.ssh_host, f"mkdir -p {cfg.work_dir}", timeout=10)
+        
+        # 启动进程 - 使用更简单的后台启动方式
         print(f"[{cfg.hostname}] 正在启动测试进程...")
-        print(f"[{cfg.hostname}] 命令: {cmd[:120]}...")
-        rc, stdout, stderr = self._ssh_cmd(cfg.ssh_host, cmd, timeout=60)
+        
+        # 简化命令：直接后台运行，然后获取PID
+        simple_cmd = f"cd {cfg.work_dir} && nohup {self.remote_bin_path} -f {self.args.file} -s {self.args.size} -b {self.args.block} -p {cfg.threads} -d {self.args.duration} -w {self.args.write_ratio} --start {cfg.offset_start} --end {cfg.offset_end} --hostname {cfg.hostname} > {cfg.work_dir}/test.log 2>&1 & echo $!"
+        
+        print(f"[{cfg.hostname}] 命令: {simple_cmd[:150]}...")
+        rc, stdout, stderr = self._ssh_cmd(cfg.ssh_host, simple_cmd, timeout=30)
         
         print(f"[{cfg.hostname}] 启动结果: rc={rc}")
         
@@ -336,8 +346,8 @@ class DistFSLauncher:
         print(f"[{cfg.hostname}] 原始输出: '{stdout}'")
         print(f"[{cfg.hostname}] PID: '{pid}'")
         
-        if not pid:
-            return {"error": f"无法获取 PID，输出为空"}
+        if not pid or not pid.isdigit():
+            return {"error": f"无法获取有效的 PID，输出: '{stdout}'"}
         
         # 等待测试完成
         return self._wait_for_completion(cfg, pid)
