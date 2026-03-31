@@ -292,7 +292,7 @@ class DistFSLauncher:
         if self.args.verbose:
             cmd_parts.append("-v")
         
-        if not self.args.verify:
+        if not self.args.no_verify:
             cmd_parts.append("--no-verify")
         
         # 使用 nohup 和重定向输出
