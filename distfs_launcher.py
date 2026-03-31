@@ -298,21 +298,39 @@ class DistFSLauncher:
         # 使用 nohup 和重定向输出
         cmd = " ".join(cmd_parts)
         log_file = f"{cfg.work_dir}/test.log"
+        pid_file = f"{cfg.work_dir}/test.pid"
         
         # 使用 nohup 确保 SSH 断开后继续运行
-        full_cmd = f"cd {cfg.work_dir} && nohup {cmd} > {log_file} 2>&1 &"
-        full_cmd += f" echo $! > {cfg.work_dir}/test.pid"
+        # 先启动进程，然后获取 PID，确保能快速返回
+        full_cmd = f"cd {cfg.work_dir} && "
+        full_cmd += f"(nohup {cmd} > {log_file} 2>&1 &) && "
+        full_cmd += f"echo $! > {pid_file} && "
+        full_cmd += f"cat {pid_file}"
         
         return full_cmd
     
     def _run_on_host(self, cfg: HostConfig, cmd: str) -> dict:
         """在单个主机上运行测试"""
         print(f"[{cfg.hostname}] 启动测试...")
+        print(f"[{cfg.hostname}] 执行命令: {cmd[:100]}...")
+        
+        # 先测试基本 SSH 连通性
+        rc, stdout, stderr = self._ssh_cmd(cfg.ssh_host, "echo 'SSH_OK'", timeout=10)
+        if rc != 0:
+            return {"error": f"SSH 连通性测试失败: {stderr}"}
+        print(f"[{cfg.hostname}] SSH 连通性: OK")
+        
+        # 检查远程文件是否存在
+        rc, stdout, stderr = self._ssh_cmd(cfg.ssh_host, f"test -x {self.remote_bin_path} && echo 'EXISTS'", timeout=10)
+        if rc != 0:
+            return {"error": f"远程二进制文件不存在或不可执行: {self.remote_bin_path}"}
+        print(f"[{cfg.hostname}] 远程文件检查: OK")
         
         # 启动进程
+        print(f"[{cfg.hostname}] 正在启动测试进程...")
         rc, stdout, stderr = self._ssh_cmd(cfg.ssh_host, cmd, timeout=60)
         if rc != 0:
-            return {"error": f"启动失败: {stderr}"}
+            return {"error": f"启动失败 (rc={rc}): {stderr}"}
         
         pid = stdout.strip()
         print(f"[{cfg.hostname}] PID: {pid}")
