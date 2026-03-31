@@ -342,12 +342,27 @@ class DistFSLauncher:
         """等待测试完成"""
         log_file = f"{cfg.work_dir}/test.log"
         
+        print(f"[{cfg.hostname}] 开始等待进程 {pid} 完成...")
+        
+        # 验证 PID 是否有效
+        if not pid or not pid.isdigit():
+            return {"error": f"无效的 PID: {pid}"}
+        
+        check_count = 0
         while not self._stop_requested:
             # 检查进程是否还在运行（使用短超时）
-            rc, _, _ = self._ssh_cmd(cfg.ssh_host, f"kill -0 {pid} 2>/dev/null", timeout=10)
-            if rc != 0:
+            check_cmd = f"kill -0 {pid} 2>/dev/null && echo 'RUNNING' || echo 'STOPPED'"
+            rc, stdout, stderr = self._ssh_cmd(cfg.ssh_host, check_cmd, timeout=10)
+            status = stdout.strip() if stdout else "UNKNOWN"
+            
+            check_count += 1
+            if check_count % 12 == 0:  # 每分钟打印一次
+                print(f"[{cfg.hostname}] 检查 #{check_count}: 进程状态={status}, rc={rc}")
+            
+            if status != "RUNNING":
+                print(f"[{cfg.hostname}] 进程已结束 (状态={status}, 检查次数={check_count})")
                 # 进程已结束，读取日志
-                rc, stdout, _ = self._ssh_cmd(cfg.ssh_host, f"cat {log_file}")
+                rc, stdout, _ = self._ssh_cmd(cfg.ssh_host, f"cat {log_file}", timeout=30)
                 return {
                     "hostname": cfg.hostname,
                     "pid": pid,
@@ -355,11 +370,11 @@ class DistFSLauncher:
                     "offset_range": [cfg.offset_start, cfg.offset_end]
                 }
             
-            # 打印进度
-            if self.args.verbose:
-                rc, stdout, _ = self._ssh_cmd(cfg.ssh_host, f"tail -5 {log_file} 2>/dev/null")
-                if stdout:
-                    print(f"\n[{cfg.hostname}] 进度:\n{stdout}")
+            # 打印进度（即使非 verbose 模式，也每 30 秒打印一次）
+            if self.args.verbose or check_count % 6 == 0:
+                rc_log, stdout_log, _ = self._ssh_cmd(cfg.ssh_host, f"tail -3 {log_file} 2>/dev/null", timeout=10)
+                if stdout_log:
+                    print(f"[{cfg.hostname}] 进度: {stdout_log.strip()}")
             
             time.sleep(5)
         
@@ -396,14 +411,21 @@ class DistFSLauncher:
                 
                 # 解析统计数据
                 for line in log.split('\n'):
-                    if '总操作数' in line or '总字节数' in line or '错误数' in line:
+                    if '总操作数' in line:
                         try:
-                            if '总操作数' in line:
-                                total_ops += int(line.split(':')[1].strip())
-                            elif '总字节数' in line and 'GB' not in line:
-                                total_bytes += int(line.split(':')[1].strip().split()[0])
-                            elif '错误数' in line:
-                                total_errors += int(line.split(':')[1].strip())
+                            total_ops += int(line.split(':')[1].strip())
+                        except:
+                            pass
+                    elif '总字节数' in line:
+                        try:
+                            # 格式: "总字节数: 14298226688 (13.32 GB)"
+                            value = line.split(':')[1].strip().split()[0]
+                            total_bytes += int(value)
+                        except:
+                            pass
+                    elif '错误数' in line:
+                        try:
+                            total_errors += int(line.split(':')[1].strip())
                         except:
                             pass
         
