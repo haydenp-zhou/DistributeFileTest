@@ -310,7 +310,7 @@ class DistFSLauncher:
         print(f"[{cfg.hostname}] 启动测试...")
         
         # 启动进程
-        rc, stdout, stderr = self._ssh_cmd(cfg.ssh_host, cmd, timeout=10)
+        rc, stdout, stderr = self._ssh_cmd(cfg.ssh_host, cmd, timeout=60)
         if rc != 0:
             return {"error": f"启动失败: {stderr}"}
         
@@ -325,8 +325,8 @@ class DistFSLauncher:
         log_file = f"{cfg.work_dir}/test.log"
         
         while not self._stop_requested:
-            # 检查进程是否还在运行
-            rc, _, _ = self._ssh_cmd(cfg.ssh_host, f"kill -0 {pid} 2>/dev/null")
+            # 检查进程是否还在运行（使用短超时）
+            rc, _, _ = self._ssh_cmd(cfg.ssh_host, f"kill -0 {pid} 2>/dev/null", timeout=10)
             if rc != 0:
                 # 进程已结束，读取日志
                 rc, stdout, _ = self._ssh_cmd(cfg.ssh_host, f"cat {log_file}")
